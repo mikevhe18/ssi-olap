@@ -42,7 +42,7 @@
                     <notebook>
                         <page string="Query">
                             <field name="description" placeholder="Deskripsi singkat (opsional)"/>
-                            <field name="ch_query" widget="ace" options="{'mode': 'sql'}"
+                            <field name="ch_query" widget="text"
                                    placeholder="SELECT ... FROM odoo_analytics.xxx"/>
                         </page>
                         <page string="Konfigurasi Chart"
