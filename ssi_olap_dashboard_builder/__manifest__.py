@@ -12,8 +12,10 @@ dipublish otomatis tampil di section "Custom Reports" pada Go dashboard.
     "author": "mikevhe18",
     "license": "LGPL-3",
     "depends": ["base", "web"],
+    "external_dependencies": {"python": ["requests"]},
     "data": [
         "security/ir.model.access.csv",
+        "data/config_parameter_data.xml",
         "views/olap_dashboard_views.xml",
         "views/menu.xml",
     ],
