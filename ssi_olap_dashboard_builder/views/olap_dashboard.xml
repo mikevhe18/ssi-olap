@@ -86,20 +86,21 @@
                         name="action_load_schema"
                         type="object"
                         string="Lihat Struktur Tabel"
+                        attrs="{'invisible': [('is_parent_menu', '=', True)]}"
                     />
                     <button
                         name="action_validate"
                         type="object"
                         string="Validate &amp; Preview"
                         class="oe_highlight"
-                        attrs="{'invisible': [('state', '!=', 'draft')]}"
+                        attrs="{'invisible': ['|', ('is_parent_menu', '=', True), ('state', '!=', 'draft')]}"
                     />
                     <button
                         name="action_publish"
                         type="object"
                         string="Publish to Dashboard"
                         class="oe_highlight"
-                        attrs="{'invisible': [('state', '!=', 'validated')]}"
+                        attrs="{'invisible': ['|', ('state', '=', 'published'), '&amp;', ('is_parent_menu', '=', False), ('state', '!=', 'validated')]}"
                     />
                     <button
                         name="action_update"
@@ -119,7 +120,7 @@
                         name="action_open_dashboard"
                         type="object"
                         string="Open Dashboard"
-                        attrs="{'invisible': [('state', '!=', 'published')]}"
+                        attrs="{'invisible': ['|', ('state', '!=', 'published'), ('is_parent_menu', '=', True)]}"
                     />
                     <field
                         name="state"
@@ -130,7 +131,15 @@
                 <group name="group_1" position="after">
                     <group name="group_dashboard">
                         <group>
-                            <field name="chart_type" />
+                            <field name="is_parent_menu" />
+                            <field
+                                name="parent_menu_id"
+                                attrs="{'invisible': [('is_parent_menu', '=', True)]}"
+                            />
+                            <field
+                                name="chart_type"
+                                attrs="{'invisible': [('is_parent_menu', '=', True)]}"
+                            />
                             <field name="sort_order" />
                         </group>
                         <group>
@@ -144,7 +153,11 @@
                     </group>
                 </group>
                 <page name="note" position="before">
-                    <page name="schema_reference" string="Referensi Tabel">
+                    <page
+                        name="schema_reference"
+                        string="Referensi Tabel"
+                        attrs="{'invisible': [('is_parent_menu', '=', True)]}"
+                    >
                         <p class="text-muted">
                             Klik <strong>Lihat Struktur Tabel</strong> di atas
                             untuk memuat daftar tabel &amp; kolom ClickHouse
@@ -160,7 +173,11 @@
                             placeholder="Belum dimuat — klik 'Lihat Struktur Tabel'."
                         />
                     </page>
-                    <page name="query" string="Query">
+                    <page
+                        name="query"
+                        string="Query"
+                        attrs="{'invisible': [('is_parent_menu', '=', True)]}"
+                    >
                         <field
                             name="ch_query"
                             widget="text"
@@ -170,7 +187,7 @@
                     <page
                         name="chart_configuration"
                         string="Chart Configuration"
-                        attrs="{'invisible': [('chart_type', '=', 'table')]}"
+                        attrs="{'invisible': ['|', ('is_parent_menu', '=', True), ('chart_type', '=', 'table')]}"
                     >
                         <group>
                             <group attrs="{'invisible': [('chart_type', '=', 'kpi')]}">
@@ -183,7 +200,11 @@
                             </group>
                         </group>
                     </page>
-                    <page name="filters" string="Filters">
+                    <page
+                        name="filters"
+                        string="Filters"
+                        attrs="{'invisible': [('is_parent_menu', '=', True)]}"
+                    >
                         <p class="text-muted">
                             Filter controls shown above the report's chart on
                             the Go dashboard. Each filter's Param Name must

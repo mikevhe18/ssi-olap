@@ -4,8 +4,8 @@
 
 import json
 
-from odoo import _, fields, models
-from odoo.exceptions import UserError
+from odoo import _, api, fields, models
+from odoo.exceptions import UserError, ValidationError
 
 
 class OlapDashboard(models.Model):
@@ -41,8 +41,10 @@ class OlapDashboard(models.Model):
     )
     ch_query = fields.Text(
         string="ClickHouse Query",
-        required=True,
-        help="SELECT query executed against the ClickHouse analytics database.",
+        help="SELECT query executed against the ClickHouse analytics database. "
+        "Wajib diisi kecuali untuk Parent Menu (lihat is_parent_menu) — "
+        "ditegakkan lewat _check_ch_query, bukan required=True, supaya "
+        "Parent Menu tidak perlu isi query palsu.",
     )
     x_axis = fields.Char(
         string="X-Axis Column",
@@ -63,6 +65,25 @@ class OlapDashboard(models.Model):
     sort_order = fields.Integer(
         default=10,
         help="Determines the display order of this report on the Go dashboard.",
+    )
+    is_parent_menu = fields.Boolean(
+        string="Ini Parent Menu (Grup)",
+        default=False,
+        help="Kalau dicentang, record ini HANYA jadi menu pengelompokan di "
+        "submenu-bar dashboard — tidak punya query/chart sendiri (tab "
+        "Query/Chart Configuration/Filters/Referensi Tabel/Preview "
+        "disembunyikan). Laporan lain bisa memilih record ini lewat "
+        "'Tampilkan di Bawah Menu' supaya masuk sebagai sub-item, bukan "
+        "tampil sejajar di baris menu utama.",
+    )
+    parent_menu_id = fields.Many2one(
+        string="Tampilkan di Bawah Menu",
+        comodel_name="olap_dashboard",
+        domain="[('is_parent_menu', '=', True), ('state', '=', 'published')]",
+        ondelete="restrict",
+        help="Opsional — pilih Parent Menu (harus sudah di-Publish dulu) "
+        "supaya laporan ini dikelompokkan sebagai sub-item di bawahnya, "
+        "bukan tampil sejajar di baris menu dashboard.",
     )
     filter_ids = fields.One2many(
         string="Filters",
@@ -124,6 +145,28 @@ class OlapDashboard(models.Model):
         "'Lihat Struktur Tabel', bukan dokumentasi statis.",
     )
 
+    @api.constrains("is_parent_menu", "ch_query")
+    def _check_ch_query(self):
+        for record in self:
+            if not record.is_parent_menu and not (record.ch_query or "").strip():
+                raise ValidationError(
+                    _(
+                        "ClickHouse Query wajib diisi kecuali record ini "
+                        "adalah Parent Menu."
+                    )
+                )
+
+    @api.constrains("is_parent_menu", "parent_menu_id")
+    def _check_no_nested_parent_menu(self):
+        for record in self:
+            if record.is_parent_menu and record.parent_menu_id:
+                raise ValidationError(
+                    _(
+                        "Parent Menu tidak boleh punya Parent Menu lain — "
+                        "hanya satu tingkat pengelompokan yang didukung."
+                    )
+                )
+
     # ── Go API helpers ───────────────────────────────────────────────────────
     # _get_param/_api_url/_dashboard_url/_api_key/_call_api now live in
     # olap.api.mixin (olap_api_mixin.py), shared with olap_schema_table.
@@ -138,7 +181,7 @@ class OlapDashboard(models.Model):
             "name": self.name,
             "description": self.note or "",
             "chart_type": self.chart_type,
-            "query": self.ch_query,
+            "query": self.ch_query or "",
             "x_axis": self.x_axis or "",
             "y_axis": self.y_axis or "",
             "x_label": self.x_label or "",
@@ -146,6 +189,10 @@ class OlapDashboard(models.Model):
             "sort_order": self.sort_order or 0,
             "created_by": self.env.user.name,
             "filters": self._prepare_filters_payload(),
+            "is_parent_menu": self.is_parent_menu,
+            "parent_menu_id": self.parent_menu_id.go_report_id
+            if self.parent_menu_id
+            else "",
         }
 
     @staticmethod
@@ -261,7 +308,9 @@ Solution: Fix the ClickHouse query and validate again
 
     def _publish(self):
         self.ensure_one()
-        if self.state != "validated":
+        # Parent Menu tidak punya query untuk divalidasi — boleh publish
+        # langsung dari draft.
+        if self.state != "validated" and not self.is_parent_menu:
             error_message = """
 Context: Publish dashboard to Go
 Database ID: %s
@@ -327,6 +376,23 @@ Solution: Nothing to unpublish - report is already unpublished
                 self.id,
             )
             raise UserError(_(error_message))
+        if self.is_parent_menu:
+            children = self.search(
+                [("parent_menu_id", "=", self.id), ("state", "=", "published")]
+            )
+            if children:
+                error_message = """
+Context: Unpublish Parent Menu from Go
+Database ID: %s
+Problem: %s laporan lain masih menunjuk ke Parent Menu ini (%s)
+Solution: Pindahkan/unpublish laporan-laporan itu dulu sebelum unpublish \
+Parent Menu ini
+""" % (
+                    self.id,
+                    len(children),
+                    ", ".join(children.mapped("name")),
+                )
+                raise UserError(_(error_message))
         self._call_api("DELETE", "/api/custom-reports/%s" % self.go_report_id)
         self.write({"state": "draft", "go_report_id": False})
 
