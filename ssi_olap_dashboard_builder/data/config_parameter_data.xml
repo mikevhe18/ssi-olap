@@ -1,9 +1,12 @@
-<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Copyright 2026 OpenSynergy Indonesia
+     Copyright 2026 PT. Simetri Sinergi Indonesia
+     License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl). -->
 <odoo noupdate="1">
 
-    <!-- Ganti nilai-nilai ini di Settings > Technical > System Parameters
-         sesuai deployment (URL Go API, URL dashboard publik, dan API key
-         yang sama dengan ODOO_API_KEY di .env server Go). -->
+    <!-- Replace these values in Settings > Technical > System Parameters
+         according to the deployment (Go API URL, public dashboard URL, and
+         the API key matching ODOO_API_KEY in the Go server's .env file). -->
 
     <record id="config_parameter_go_api_url" model="ir.config_parameter">
         <field name="key">olap.go_api_url</field>
@@ -17,7 +20,7 @@
 
     <record id="config_parameter_go_api_key" model="ir.config_parameter">
         <field name="key">olap.go_api_key</field>
-        <field name="value">GANTI_DENGAN_ODOO_API_KEY</field>
+        <field name="value">CHANGE_ME_TO_ODOO_API_KEY</field>
     </record>
 
 </odoo>

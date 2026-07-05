@@ -1,26 +1,34 @@
-# -*- coding: utf-8 -*-
+# Copyright 2026 OpenSynergy Indonesia
+# Copyright 2026 PT. Simetri Sinergi Indonesia
+# License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl).
+
 import json
-import logging
 
-import requests
-
-from odoo import api, fields, models, _
+from odoo import _, fields, models
 from odoo.exceptions import UserError
-
-_logger = logging.getLogger(__name__)
-
-API_TIMEOUT = 15
 
 
 class OlapDashboard(models.Model):
-    _name = "olap.dashboard"
+    """
+    Represents a custom ClickHouse report definition that can be validated
+    against, and published to, the OLAP Platform's Go dashboard service.
+    Publishing/unpublishing this record calls the Go API server-to-server
+    so the report becomes visible in the Go dashboard's "Custom Reports"
+    section. The ``note`` field inherited from ``mixin.master_data`` is
+    used as the report's short description.
+    """
+
+    _name = "olap_dashboard"
+    _inherit = ["mixin.master_data", "olap.api.mixin"]
     _description = "OLAP Dashboard Builder"
     _order = "sort_order, name"
 
-    name = fields.Char(required=True)
-    description = fields.Text()
+    code = fields.Char(
+        default="/",
+    )
     chart_type = fields.Selection(
-        [
+        string="Chart Type",
+        selection=[
             ("bar", "Bar"),
             ("line", "Line"),
             ("pie", "Pie"),
@@ -29,16 +37,45 @@ class OlapDashboard(models.Model):
         ],
         required=True,
         default="bar",
+        help="Visualization type used to render the report on the Go dashboard.",
     )
-    ch_query = fields.Text(string="ClickHouse Query", required=True)
-    x_axis = fields.Char(string="Kolom X")
-    y_axis = fields.Char(string="Kolom Y")
-    x_label = fields.Char(string="Label X")
-    y_label = fields.Char(string="Label Y")
-    sort_order = fields.Integer(default=10)
+    ch_query = fields.Text(
+        string="ClickHouse Query",
+        required=True,
+        help="SELECT query executed against the ClickHouse analytics database.",
+    )
+    x_axis = fields.Char(
+        string="X-Axis Column",
+        help="Name of the result column plotted on the X axis.",
+    )
+    y_axis = fields.Char(
+        string="Y-Axis Column",
+        help="Name of the result column plotted on the Y axis.",
+    )
+    x_label = fields.Char(
+        string="X-Axis Label",
+        help="Label displayed for the X axis on the chart.",
+    )
+    y_label = fields.Char(
+        string="Y-Axis Label",
+        help="Label displayed for the Y axis on the chart.",
+    )
+    sort_order = fields.Integer(
+        default=10,
+        help="Determines the display order of this report on the Go dashboard.",
+    )
+    filter_ids = fields.One2many(
+        string="Filters",
+        comodel_name="olap_dashboard_filter",
+        inverse_name="dashboard_id",
+        help="Filter controls shown above the report's chart on the Go "
+        "dashboard (the .ctrl-bar, ala 'Performance Inventory'). Leave "
+        "empty for a report with no filters — the 'Tampilkan' button still "
+        "shows, just with nothing to configure.",
+    )
 
     state = fields.Selection(
-        [
+        selection=[
             ("draft", "Draft"),
             ("validated", "Validated"),
             ("published", "Published"),
@@ -46,66 +83,60 @@ class OlapDashboard(models.Model):
         default="draft",
         required=True,
         copy=False,
+        help=(
+            "Report status: Draft = not yet checked, "
+            "Validated = query checked successfully against ClickHouse, "
+            "Published = live on the Go dashboard."
+        ),
     )
 
-    preview_columns = fields.Text(string="Preview Columns (JSON)", readonly=True, copy=False)
-    preview_data = fields.Text(string="Preview Data (JSON)", readonly=True, copy=False)
-    go_report_id = fields.Char(string="Go Report ID", readonly=True, copy=False)
+    preview_columns = fields.Text(
+        string="Preview Columns (JSON)",
+        readonly=True,
+        copy=False,
+        help="JSON list of column names returned by the last successful validation.",
+    )
+    preview_data = fields.Text(
+        string="Preview Data (JSON)",
+        readonly=True,
+        copy=False,
+        help="JSON sample rows returned by the last successful validation.",
+    )
+    go_report_id = fields.Char(
+        string="Go Report ID",
+        readonly=True,
+        copy=False,
+        help="Identifier assigned by the Go API once this report is published.",
+    )
 
-    created_by = fields.Char(default=lambda self: self.env.user.name, readonly=True)
+    created_by = fields.Char(
+        default=lambda self: self.env.user.name,
+        readonly=True,
+        help="Name of the user who created this dashboard definition.",
+    )
 
-    # ── Konfigurasi Go API (System Parameters) ─────────────────────────────────
+    schema_reference = fields.Text(
+        string="Referensi Tabel",
+        readonly=True,
+        copy=False,
+        help="Struktur tabel ClickHouse (odoo_analytics) yang bisa dipakai "
+        "di ClickHouse Query — diambil langsung dari server lewat tombol "
+        "'Lihat Struktur Tabel', bukan dokumentasi statis.",
+    )
 
-    def _get_param(self, key):
-        value = self.env["ir.config_parameter"].sudo().get_param(key)
-        if not value:
-            raise UserError(_("System Parameter '%s' belum diisi.") % key)
-        return value
+    # ── Go API helpers ───────────────────────────────────────────────────────
+    # _get_param/_api_url/_dashboard_url/_api_key/_call_api now live in
+    # olap.api.mixin (olap_api_mixin.py), shared with olap_schema_table.
 
-    def _api_url(self):
-        return self._get_param("olap.go_api_url").rstrip("/")
+    def _prepare_filters_payload(self):
+        self.ensure_one()
+        return [f._prepare_payload() for f in self.filter_ids]
 
-    def _dashboard_url(self):
-        return self._get_param("olap.go_dashboard_url").rstrip("/")
-
-    def _api_key(self):
-        return self._get_param("olap.go_api_key")
-
-    # ── Go API helpers ──────────────────────────────────────────────────────────
-
-    def _call_api(self, method, path, payload=None):
-        """POST/PUT/DELETE ke Go API. Selalu kirim X-API-Key. Melempar UserError
-        dengan pesan dari Go kalau status >= 400 atau body bukan JSON valid."""
-        url = self._api_url() + path
-        headers = {"Content-Type": "application/json", "X-API-Key": self._api_key()}
-        try:
-            resp = requests.request(
-                method,
-                url,
-                headers=headers,
-                data=json.dumps(payload) if payload is not None else None,
-                timeout=API_TIMEOUT,
-            )
-        except requests.exceptions.RequestException as e:
-            _logger.exception("olap.dashboard: gagal menghubungi Go API %s", url)
-            raise UserError(_("Gagal menghubungi Go API (%s): %s") % (url, e))
-
-        try:
-            data = resp.json()
-        except ValueError:
-            raise UserError(
-                _("Respons Go API tidak valid (status %s): %s")
-                % (resp.status_code, resp.text[:300])
-            )
-        if resp.status_code >= 400:
-            raise UserError(data.get("error") or _("Go API error (status %s)") % resp.status_code)
-        return data
-
-    def _report_payload(self):
+    def _prepare_report_payload(self):
         self.ensure_one()
         return {
             "name": self.name,
-            "description": self.description or "",
+            "description": self.note or "",
             "chart_type": self.chart_type,
             "query": self.ch_query,
             "x_axis": self.x_axis or "",
@@ -114,6 +145,7 @@ class OlapDashboard(models.Model):
             "y_label": self.y_label or "",
             "sort_order": self.sort_order or 0,
             "created_by": self.env.user.name,
+            "filters": self._prepare_filters_payload(),
         }
 
     @staticmethod
@@ -122,58 +154,199 @@ class OlapDashboard(models.Model):
 
     # ── Actions ──────────────────────────────────────────────────────────────
 
+    def action_load_schema(self):
+        for record in self.sudo():
+            record._load_schema()
+        return self._reload()
+
+    def _load_schema(self):
+        self.ensure_one()
+        tables = self._call_api("GET", "/api/custom-reports/schema")
+        lines = [
+            "PENTING sebelum menulis query:",
+            "",
+            '1. Semua tabel WAJIB pakai prefix "odoo_analytics." — nama ini'
+            " adalah nama database ClickHouse-nya, bukan opsional. Contoh:",
+            "     FROM odoo_analytics.account_move",
+            "",
+            "2. WAJIB tambahkan FINAL setelah nama tabel, contoh:",
+            "     FROM odoo_analytics.account_move FINAL",
+            "   Tabel-tabel ini pakai engine ReplacingMergeTree (data masuk"
+            " lewat CDC/replikasi bertahap) — tanpa FINAL, query bisa"
+            " mengembalikan baris duplikat/versi basi dari record yang sama.",
+            "",
+            "3. Kolom __deleted menandai record yang sudah dihapus di Odoo"
+            " (soft-delete ikut ter-replikasi, bukan benar-benar hilang dari"
+            " ClickHouse). Biasanya perlu ditambahkan:",
+            "     WHERE __deleted != 'true'",
+            "   supaya data yang sudah dihapus di Odoo tidak ikut terhitung.",
+            "",
+            "4. Nama tabel ClickHouse = nama model Odoo dengan tanda titik (.)"
+            ' diganti garis bawah (_) — kolom "model Odoo" di bawah ini'
+            " sudah menunjukkan padanannya per tabel.",
+            "",
+            "Contoh query lengkap yang menggabungkan semua poin di atas:",
+            "  SELECT move_type, count() AS jumlah",
+            "  FROM odoo_analytics.account_move FINAL",
+            "  WHERE __deleted != 'true'",
+            "  GROUP BY move_type",
+            "",
+            "=" * 60,
+            "DAFTAR TABEL & KOLOM (diambil langsung dari server saat ini)",
+            "=" * 60,
+            "",
+        ]
+        for table in tables:
+            lines.append(
+                "=== %s (model Odoo: %s) ==="
+                % (table["table"], table["odoo_model"])
+            )
+            for column in table["columns"]:
+                line = "  %-20s %s" % (column["name"], column["type"])
+                if column.get("note"):
+                    line += "  -- %s" % column["note"]
+                lines.append(line)
+            lines.append("")
+        self.write({"schema_reference": "\n".join(lines)})
+
     def action_validate(self):
+        for record in self.sudo():
+            record._validate()
+        return self._reload()
+
+    def _validate(self):
         self.ensure_one()
         if not self.ch_query or not self.ch_query.strip():
-            raise UserError(_("Query tidak boleh kosong."))
+            error_message = """
+Context: Validate dashboard query
+Database ID: %s
+Problem: Query is empty
+Solution: Fill in the ClickHouse Query field before validating
+""" % (
+                self.id,
+            )
+            raise UserError(_(error_message))
         data = self._call_api(
-            "POST", "/api/custom-reports/validate", {"query": self.ch_query}
+            "POST",
+            "/api/custom-reports/validate",
+            {"query": self.ch_query, "filters": self._prepare_filters_payload()},
         )
         if not data.get("valid"):
-            raise UserError(data.get("error") or _("Query tidak valid."))
+            error_message = """
+Context: Validate dashboard query
+Database ID: %s
+Problem: Query rejected by Go API (%s)
+Solution: Fix the ClickHouse query and validate again
+""" % (
+                self.id,
+                data.get("error"),
+            )
+            raise UserError(_(error_message))
         self.write(
             {
-                "preview_columns": json.dumps(data.get("columns", []), ensure_ascii=False),
+                "preview_columns": json.dumps(
+                    data.get("columns", []), ensure_ascii=False
+                ),
                 "preview_data": json.dumps(
                     data.get("preview", []), indent=2, ensure_ascii=False
                 ),
                 "state": "validated",
             }
         )
-        return self._reload()
 
     def action_publish(self):
+        for record in self.sudo():
+            record._publish()
+        return self._reload()
+
+    def _publish(self):
         self.ensure_one()
         if self.state != "validated":
-            raise UserError(_("Report harus divalidasi terlebih dahulu sebelum publish."))
-        data = self._call_api("POST", "/api/custom-reports", self._report_payload())
+            error_message = """
+Context: Publish dashboard to Go
+Database ID: %s
+Problem: Report has not been validated yet
+Solution: Run 'Validate & Preview' before publishing
+""" % (
+                self.id,
+            )
+            raise UserError(_(error_message))
+        data = self._call_api(
+            "POST", "/api/custom-reports", self._prepare_report_payload()
+        )
         report_id = data.get("ID") or data.get("id")
         if not report_id:
-            raise UserError(_("Go API tidak mengembalikan ID report."))
+            error_message = """
+Context: Publish dashboard to Go
+Database ID: %s
+Problem: Go API did not return a report ID
+Solution: Check the Go API server logs and try again
+""" % (
+                self.id,
+            )
+            raise UserError(_(error_message))
         self.write({"go_report_id": report_id, "state": "published"})
-        return self._reload()
 
     def action_update(self):
+        for record in self.sudo():
+            record._update()
+        return self._reload()
+
+    def _update(self):
         self.ensure_one()
         if self.state != "published":
-            raise UserError(_("Report belum dipublish."))
+            error_message = """
+Context: Update published dashboard on Go
+Database ID: %s
+Problem: Report has not been published yet
+Solution: Publish the report before trying to update it
+""" % (
+                self.id,
+            )
+            raise UserError(_(error_message))
         self._call_api(
-            "PUT", "/api/custom-reports/%s" % self.go_report_id, self._report_payload()
+            "PUT",
+            "/api/custom-reports/%s" % self.go_report_id,
+            self._prepare_report_payload(),
         )
-        return self._reload()
 
     def action_unpublish(self):
-        self.ensure_one()
-        if self.state != "published":
-            raise UserError(_("Report belum dipublish."))
-        self._call_api("DELETE", "/api/custom-reports/%s" % self.go_report_id)
-        self.write({"state": "draft", "go_report_id": False})
+        for record in self.sudo():
+            record._unpublish()
         return self._reload()
 
+    def _unpublish(self):
+        self.ensure_one()
+        if self.state != "published":
+            error_message = """
+Context: Unpublish dashboard from Go
+Database ID: %s
+Problem: Report has not been published yet
+Solution: Nothing to unpublish - report is already unpublished
+""" % (
+                self.id,
+            )
+            raise UserError(_(error_message))
+        self._call_api("DELETE", "/api/custom-reports/%s" % self.go_report_id)
+        self.write({"state": "draft", "go_report_id": False})
+
     def action_open_dashboard(self):
+        for record in self.sudo():
+            result = record._open_dashboard()
+        return result
+
+    def _open_dashboard(self):
         self.ensure_one()
         if not self.go_report_id:
-            raise UserError(_("Report belum dipublish."))
+            error_message = """
+Context: Open dashboard
+Database ID: %s
+Problem: Report has not been published yet
+Solution: Publish the report before opening it on the dashboard
+""" % (
+                self.id,
+            )
+            raise UserError(_(error_message))
         return {
             "type": "ir.actions.act_url",
             "url": "%s/custom-reports/%s" % (self._dashboard_url(), self.go_report_id),

@@ -1,9 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<odoo>
-
-    <menuitem id="menu_olap_root" name="OLAP" sequence="90"
-              groups="base.group_system,base.group_user"/>
-    <menuitem id="menu_olap_dashboard_builder" name="Dashboard Builder"
-              parent="menu_olap_root" action="action_olap_dashboard" sequence="10"/>
-
-</odoo>

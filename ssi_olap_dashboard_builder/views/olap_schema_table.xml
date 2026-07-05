@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<!-- Copyright 2026 OpenSynergy Indonesia
+     Copyright 2026 PT. Simetri Sinergi Indonesia
+     License AGPL-3.0 or later (http://www.gnu.org/licenses/agpl). -->
+<odoo>
+
+    <record id="olap_schema_table_view_tree" model="ir.ui.view">
+        <field name="name">olap_schema_table - tree</field>
+        <field name="model">olap_schema_table</field>
+        <field name="arch" type="xml">
+            <tree>
+                <field name="name" />
+                <field name="pg_table" />
+                <field name="state" />
+                <field name="schema_version" />
+            </tree>
+        </field>
+    </record>
+
+    <record id="olap_schema_table_view_form" model="ir.ui.view">
+        <field name="name">olap_schema_table - form</field>
+        <field name="model">olap_schema_table</field>
+        <field name="arch" type="xml">
+            <form>
+                <header>
+                    <button
+                        name="action_load_pg_columns"
+                        type="object"
+                        string="Muat Kolom dari PostgreSQL"
+                    />
+                    <button
+                        name="action_provision"
+                        type="object"
+                        string="Provision ke ClickHouse"
+                        class="oe_highlight"
+                        confirm="Ini akan membuat/mengubah tabel di ClickHouse. Untuk tabel BARU, connector Debezium akan direconfigure — koneksi CDC untuk SEMUA tabel client ini sempat restart sebentar. PENTING: data yang SUDAH ADA di Postgres sebelum tabel/kolom ini terdaftar ke Debezium TIDAK otomatis muncul (tidak ada snapshot ulang) — baris tersebut baru terisi/ikut ter-capture setelah baris itu di-update lagi di Odoo. Kalau perlu, tabel yang sudah lama punya data bisa 'disegarkan' dengan mengedit ulang record-nya di Odoo setelah provision. Lanjutkan?"
+                    />
+                    <field
+                        name="state"
+                        widget="statusbar"
+                        statusbar_visible="draft,provisioned"
+                    />
+                </header>
+                <sheet>
+                    <group>
+                        <group>
+                            <field name="name" />
+                            <field
+                                name="pg_table"
+                                attrs="{'readonly': [('state', '=', 'provisioned')]}"
+                            />
+                        </group>
+                        <group>
+                            <field name="schema_version" />
+                        </group>
+                    </group>
+                    <notebook>
+                        <page name="columns" string="Kolom">
+                            <p class="text-muted">
+                                Kolom struktural (id, write_date, __deleted,
+                                _ingested_at) otomatis ditambahkan di sisi
+                                Go — cukup isi kolom bisnis yang relevan di
+                                sini. Kolom yang sudah pernah di-provision
+                                tidak boleh dihapus atau diubah tipenya
+                                (ditolak di sisi Go) — hanya baris BARU yang
+                                akan ditambahkan ke ClickHouse saat klik
+                                "Provision ke ClickHouse".
+                            </p>
+                            <field name="column_ids">
+                                <tree editable="bottom">
+                                    <field name="sequence" widget="handle" />
+                                    <field name="name" />
+                                    <field name="pg_type" />
+                                    <field name="ch_type" />
+                                    <field name="note" />
+                                </tree>
+                            </field>
+                        </page>
+                    </notebook>
+                </sheet>
+            </form>
+        </field>
+    </record>
+
+    <record id="olap_schema_table_action" model="ir.actions.act_window">
+        <field name="name">Analytics Table Builder</field>
+        <field name="res_model">olap_schema_table</field>
+        <field name="view_mode">tree,form</field>
+    </record>
+
+    <menuitem
+        id="olap_schema_table_menu"
+        name="Analytics Table Builder"
+        parent="menu_olap_root"
+        action="olap_schema_table_action"
+        sequence="20"
+    />
+
+</odoo>

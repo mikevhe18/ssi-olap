@@ -1,0 +1,68 @@
+scenarios:
+  - name: "Create OLAP Dashboard"
+    steps:
+      - step: "Create record"
+        action: "create"
+        model: "olap_dashboard"
+        save_as: "dashboard"
+        values:
+          name: "Test Dashboard"
+          ch_query: "SELECT 1"
+      - step: "Assert created in draft"
+        action: "assert"
+        target: "dashboard"
+        asserts:
+          id:
+            type: "value"
+            operator: "is_truthy"
+          name:
+            type: "value"
+            expected: "Test Dashboard"
+          state:
+            type: "value"
+            expected: "draft"
+          chart_type:
+            type: "value"
+            expected: "bar"
+
+  - name: "Edit OLAP Dashboard Name"
+    steps:
+      - step: "Create record"
+        action: "create"
+        model: "olap_dashboard"
+        save_as: "dashboard"
+        values:
+          name: "Test Dashboard"
+          ch_query: "SELECT 1"
+      - step: "Write new name"
+        action: "write"
+        target: "dashboard"
+        values:
+          name: "Updated Dashboard"
+      - step: "Assert name updated"
+        action: "assert"
+        target: "dashboard"
+        asserts:
+          name:
+            type: "value"
+            expected: "Updated Dashboard"
+
+  - name: "Delete OLAP Dashboard"
+    steps:
+      - step: "Create record"
+        action: "create"
+        model: "olap_dashboard"
+        save_as: "dashboard"
+        values:
+          name: "Test Dashboard To Delete"
+          ch_query: "SELECT 1"
+      - step: "Delete record"
+        action: "call"
+        target: "dashboard"
+        method: "unlink"
+      - step: "Verify deleted"
+        action: "search"
+        model: "olap_dashboard"
+        domain: [["name", "=", "Test Dashboard To Delete"]]
+        save_as: "result"
+        expect_count: 0
